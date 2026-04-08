@@ -17,7 +17,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dt", type=float, default=1.0 / 60.0, help="Simulation time step.")
     parser.add_argument("--substeps", type=int, default=1, help="Number of substeps per frame.")
-    parser.add_argument("--steps", type=int, default=180, help="How many frames to advance.")
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=0,
+        help="How many frames to advance. Use 0 to run until the GUI window is closed.",
+    )
     parser.add_argument(
         "--headless",
         action="store_true",

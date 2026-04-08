@@ -70,6 +70,8 @@ class RigidBodyViewer:
         self.force_strength = force_strength
         self.camera = OrbitCamera()
         self.gui = None
+        self._fps_smoothed = 0.0
+        self._last_frame_time = None
 
         if ti is not None:
             ti.init(arch=ti.cpu, default_fp=ti.f64)
@@ -86,9 +88,11 @@ class RigidBodyViewer:
 
         frame_idx = 0
         while self.gui.running and (max_frames is None or frame_idx < max_frames):
+            frame_start = time.perf_counter()
             self._handle_gui_events()
             self.world.step()
             self._draw_gui_frame()
+            self._update_fps(frame_start)
             frame_idx += 1
             if self.realtime:
                 time.sleep(self.world.config.time_step)
@@ -193,6 +197,7 @@ class RigidBodyViewer:
             f"Demo: {self.world.state.active_demo}",
             f"Frame: {self.world.state.frame}",
             f"Time: {self.world.state.time:.3f}",
+            f"FPS: {self._fps_smoothed:.1f}",
             "[WASD/QE] apply force to primary body",
             "[P] pause  [R] reset  [1/2/3] switch demo  [Esc] quit",
         ]
@@ -213,6 +218,15 @@ class RigidBodyViewer:
         for line in lines:
             self.gui.text(line, pos=(0.02, y), font_size=18, color=0xF8F9FA)
             y -= 0.04
+
+    def _update_fps(self, frame_start: float) -> None:
+        frame_end = time.perf_counter()
+        frame_dt = max(frame_end - frame_start, 1e-8)
+        instantaneous_fps = 1.0 / frame_dt
+        if self._fps_smoothed <= 0.0:
+            self._fps_smoothed = instantaneous_fps
+        else:
+            self._fps_smoothed = 0.9 * self._fps_smoothed + 0.1 * instantaneous_fps
 
     def _project_points(self, points_world: np.ndarray) -> np.ndarray:
         width, height = self.resolution
