@@ -191,6 +191,8 @@ class RigidBodyState:
     restitution: float = 0.3
     friction: float = 0.5
     color: np.ndarray = field(default_factory=lambda: vec3(0.7, 0.7, 0.8))
+    is_sleeping: bool = False
+    sleep_counter: int = 0
     user_data: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -200,6 +202,16 @@ class RigidBodyState:
     def clear_accumulators(self) -> None:
         self.force_accumulator.fill(0.0)
         self.torque_accumulator.fill(0.0)
+
+    def wake(self) -> None:
+        self.is_sleeping = False
+        self.sleep_counter = 0
+
+    def sleep(self) -> None:
+        self.is_sleeping = True
+        self.sleep_counter = 0
+        self.linear_velocity.fill(0.0)
+        self.angular_velocity.fill(0.0)
 
     def rotation_matrix(self) -> np.ndarray:
         return quat_to_mat3_wxyz(self.orientation)
@@ -234,6 +246,7 @@ class RigidBodyState:
         self.orientation = snapshot.orientation.copy()
         self.linear_velocity = snapshot.linear_velocity.copy()
         self.angular_velocity = snapshot.angular_velocity.copy()
+        self.wake()
         self.clear_accumulators()
 
 

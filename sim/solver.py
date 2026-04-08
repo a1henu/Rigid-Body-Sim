@@ -49,6 +49,7 @@ class RigidBodySolver:
         else:
             state.contacts.clear()
         self._integrate_positions(state, step_dt)
+        self._update_sleep_states(state)
         self._end_step(state, step_dt)
 
     def _begin_step(self, state: WorldState, dt: float) -> None:
@@ -71,6 +72,7 @@ class RigidBodySolver:
         _ = dt
         for command in state.pending_commands:
             body = state.get_body(command.body_id)
+            body.wake()
             if command.command_type == CommandType.APPLY_FORCE:
                 body.force_accumulator += command.value
                 if command.world_point is not None:
@@ -94,7 +96,7 @@ class RigidBodySolver:
 
     def _integrate_velocities(self, state: WorldState, dt: float) -> None:
         for body in state.bodies:
-            if body.is_dynamic:
+            if body.is_dynamic and not body.is_sleeping:
                 self._integrate_body_velocity(body, dt)
 
     def _integrate_body_velocity(self, body: RigidBodyState, dt: float) -> None:
@@ -366,6 +368,8 @@ class RigidBodySolver:
     ) -> None:
         if not body.is_dynamic:
             return
+        if body.is_sleeping and np.linalg.norm(impulse) > 1e-4:
+            body.wake()
         body.linear_velocity = body.linear_velocity + impulse * body.inverse_mass
         body.angular_velocity = (
             body.angular_velocity
@@ -432,8 +436,39 @@ class RigidBodySolver:
 
     def _integrate_positions(self, state: WorldState, dt: float) -> None:
         for body in state.bodies:
-            if body.is_dynamic:
+            if body.is_dynamic and not body.is_sleeping:
                 self._integrate_body_pose(body, dt)
+
+    def _update_sleep_states(self, state: WorldState) -> None:
+        up = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        for body in state.bodies:
+            if not body.is_dynamic:
+                continue
+
+            support_contact = False
+            for contact in state.contacts:
+                if contact.body_a == body.body_id:
+                    support_normal = -contact.normal
+                elif contact.body_b == body.body_id:
+                    support_normal = contact.normal
+                else:
+                    continue
+                if np.dot(support_normal, up) > 0.5:
+                    support_contact = True
+                    break
+
+            linear_speed = np.linalg.norm(body.linear_velocity)
+            angular_speed = np.linalg.norm(body.angular_velocity)
+            low_energy = linear_speed < 0.35 and angular_speed < 0.35
+
+            if support_contact and low_energy:
+                body.sleep_counter += 1
+                if body.sleep_counter >= 15:
+                    body.sleep()
+            else:
+                body.sleep_counter = 0
+                if body.is_sleeping and (not support_contact or linear_speed > 0.05 or angular_speed > 0.05):
+                    body.wake()
 
     def _integrate_body_pose(self, body: RigidBodyState, dt: float) -> None:
         body.position = body.position + dt * body.linear_velocity

@@ -1,7 +1,7 @@
 import numpy as np
 
 from sim.solver import RigidBodySolver
-from sim.state import Contact, SimulationConfig, WorldState, create_box_body
+from sim.state import Contact, MotionType, SimulationConfig, WorldState, create_box_body
 from sim.world import RigidBodyWorld
 
 
@@ -80,3 +80,40 @@ def test_step_populates_contacts_for_overlapping_world_state():
     solver.step(state, config.time_step)
 
     assert len(state.contacts) == 1
+
+
+def test_box_resting_on_floor_enters_sleep_state():
+    config = SimulationConfig(
+        time_step=1.0 / 240.0,
+        enable_gravity=True,
+        enable_collisions=True,
+        solver_iterations=10,
+    )
+    solver = RigidBodySolver(config)
+    floor = create_box_body(
+        name="floor",
+        half_extents=[3.0, 0.2, 3.0],
+        position=[0.0, -1.0, 0.0],
+        motion_type=MotionType.STATIC,
+        restitution=0.0,
+        friction=0.9,
+        user_data={"environment_boundary": True},
+    )
+    box = create_box_body(
+        name="box",
+        half_extents=[0.3, 0.3, 0.3],
+        position=[0.0, 0.5, 0.0],
+        mass=1.0,
+        restitution=0.0,
+        friction=0.8,
+    )
+    floor.body_id = 0
+    box.body_id = 1
+    state = WorldState(bodies=[floor, box])
+
+    for _ in range(600):
+        solver.step(state, config.time_step)
+
+    assert box.is_sleeping
+    np.testing.assert_allclose(box.linear_velocity, np.zeros(3), atol=1e-10)
+    np.testing.assert_allclose(box.angular_velocity, np.zeros(3), atol=1e-10)
