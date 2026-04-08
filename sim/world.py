@@ -116,6 +116,12 @@ class RigidBodyWorld:
         self.state.bodies.append(body)
         return body.body_id
 
+    def get_primary_body_id(self) -> int | None:
+        for body in self.state.bodies:
+            if body.is_dynamic:
+                return body.body_id
+        return None
+
     def queue_command(self, command: InteractionCommand) -> None:
         self.state.pending_commands.append(command)
 

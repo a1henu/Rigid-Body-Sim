@@ -23,6 +23,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run the simulation loop and print a final state summary.",
     )
+    parser.add_argument(
+        "--realtime",
+        action="store_true",
+        help="Sleep for one simulation step between rendered frames.",
+    )
     return parser
 
 
@@ -32,13 +37,14 @@ def main() -> None:
     world = RigidBodyWorld(config=config, demo_name=args.demo)
 
     if args.headless:
-        for _ in range(args.steps):
+        headless_steps = args.steps if args.steps > 0 else 180
+        for _ in range(headless_steps):
             world.step()
         print(world.describe())
         return
 
-    viewer = RigidBodyViewer(world)
-    viewer.run(max_frames=args.steps)
+    viewer = RigidBodyViewer(world, realtime=args.realtime)
+    viewer.run(max_frames=None if args.steps <= 0 else args.steps)
 
 
 if __name__ == "__main__":

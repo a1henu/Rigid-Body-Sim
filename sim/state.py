@@ -12,6 +12,10 @@ def vec3(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> np.ndarray:
     return np.array([x, y, z], dtype=np.float64)
 
 
+def vec2(x: float = 0.0, y: float = 0.0) -> np.ndarray:
+    return np.array([x, y], dtype=np.float64)
+
+
 def quat_identity_wxyz() -> np.ndarray:
     return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
 
@@ -87,6 +91,23 @@ def integrate_quat_wxyz(q: Any, omega_world: Any, dt: float) -> np.ndarray:
     omega_quat = np.array([0.0, omega[0], omega[1], omega[2]], dtype=np.float64)
     q_dot = 0.5 * quat_mul_wxyz(omega_quat, np.asarray(q, dtype=np.float64))
     return quat_normalize_wxyz(np.asarray(q, dtype=np.float64) + float(dt) * q_dot)
+
+
+def box_local_corners(half_extents: Any) -> np.ndarray:
+    hx, hy, hz = _as_vec3(half_extents)
+    return np.array(
+        [
+            [-hx, -hy, -hz],
+            [hx, -hy, -hz],
+            [hx, hy, -hz],
+            [-hx, hy, -hz],
+            [-hx, -hy, hz],
+            [hx, -hy, hz],
+            [hx, hy, hz],
+            [-hx, hy, hz],
+        ],
+        dtype=np.float64,
+    )
 
 
 def _as_vec3(value: Any, *, default: np.ndarray | None = None) -> np.ndarray:
@@ -182,6 +203,10 @@ class RigidBodyState:
             return np.zeros((3, 3), dtype=np.float64)
         rotation = self.rotation_matrix()
         return rotation @ self.inverse_inertia_body @ rotation.T
+
+    def world_corners(self) -> np.ndarray:
+        local_corners = box_local_corners(self.half_extents)
+        return (self.rotation_matrix() @ local_corners.T).T + self.position
 
     def capture_snapshot(self) -> RigidBodySnapshot:
         return RigidBodySnapshot(
