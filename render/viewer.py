@@ -305,23 +305,14 @@ class RigidBodyViewer:
             self.world.reset_active_demo()
         elif self._edge_pressed("pause", "p"):
             self.world.toggle_pause()
-        elif self._edge_pressed("demo1", "1"):
-            self.world.load_demo("single_body")
-        elif self._edge_pressed("demo2", "2"):
-            self.world.load_demo("two_body_collision")
-        elif self._edge_pressed("demo3", "3"):
-            self.world.load_demo("complex_scene")
+        elif self._edge_pressed("demo_next", ti.ui.TAB):
+            self.world.next_demo()
 
         if self.world.state.active_demo == "two_body_collision":
-            for key in ("4", "5", "6", "7"):
-                if self._edge_pressed(f"case_{key}", key):
-                    self.world.select_two_body_case_by_key(key)
-                    break
-            else:
-                if self._edge_pressed("case_next", "n"):
-                    self.world.next_two_body_case()
-                elif self._edge_pressed("case_prev", "b"):
-                    self.world.previous_two_body_case()
+            if self._edge_pressed("case_next", "n"):
+                self.world.next_two_body_case()
+            elif self._edge_pressed("case_prev", "b"):
+                self.world.previous_two_body_case()
 
         primary_body_id = self.world.get_primary_body_id()
         if primary_body_id is None:
@@ -457,7 +448,7 @@ class RigidBodyViewer:
         with self.gui.sub_window("Controls", 0.02, 0.30, 0.28, 0.22):
             self.gui.text("Move camera: RMB + WASD/EQ")
             self.gui.text("Apply force: WASD/QE")
-            self.gui.text("Switch demo: 1 / 2 / 3")
+            self.gui.text("Switch demo: Tab")
             if self.world.state.active_demo == "two_body_collision":
-                self.gui.text("Collision case: 4/5/6/7 or B/N")
+                self.gui.text("Collision case: B / N")
             self.gui.text("Close: Esc")
