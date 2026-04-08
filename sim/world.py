@@ -60,6 +60,7 @@ class RigidBodyWorld:
         self._two_body_cases: dict[str, TwoBodyCaseDefinition] = {}
         self._two_body_case_order: list[str] = []
         self._active_two_body_case_name = "face_face"
+        self._two_body_half_extents = np.array([0.35, 0.35, 0.35], dtype=np.float64)
         self._initial_config = self.config.clone()
         self._initial_snapshots: dict[int, RigidBodySnapshot] = {}
         self._random_case_seed = 20260408
@@ -71,7 +72,7 @@ class RigidBodyWorld:
         self.register_two_body_case(
             TwoBodyCaseDefinition(
                 name="point_face",
-                description="A rotated small box hits the broad face of a larger axis-aligned box.",
+                description="A rotated box hits the broad face of another same-sized axis-aligned box.",
                 builder=self._build_two_body_point_face_case,
             )
         )
@@ -85,7 +86,7 @@ class RigidBodyWorld:
         self.register_two_body_case(
             TwoBodyCaseDefinition(
                 name="face_face",
-                description="Two axis-aligned boxes collide head-on with broad opposing faces.",
+                description="Two same-sized axis-aligned boxes collide head-on with broad opposing faces.",
                 builder=self._build_two_body_face_face_case,
             )
         )
@@ -135,6 +136,14 @@ class RigidBodyWorld:
 
     def list_two_body_cases(self) -> tuple[str, ...]:
         return tuple(self._two_body_case_order)
+
+    def two_body_case_key_map(self) -> dict[str, str]:
+        return {
+            "4": "point_face",
+            "5": "edge_edge",
+            "6": "face_face",
+            "7": "random_pose",
+        }
 
     def load_demo(self, name: str) -> None:
         if name not in self._demos:
@@ -197,6 +206,13 @@ class RigidBodyWorld:
         self._active_two_body_case_name = name
         if self.state.active_demo == "two_body_collision":
             self.load_demo("two_body_collision")
+
+    def select_two_body_case_by_key(self, key: str) -> bool:
+        case_name = self.two_body_case_key_map().get(key)
+        if case_name is None:
+            return False
+        self.select_two_body_case(case_name)
+        return True
 
     def next_two_body_case(self) -> None:
         index = self._two_body_case_order.index(self._active_two_body_case_name)
@@ -298,7 +314,7 @@ class RigidBodyWorld:
         self.add_body(
             create_box_body(
                 name="left_box",
-                half_extents=[0.35, 0.35, 0.35],
+                half_extents=self._two_body_half_extents,
                 position=[-1.5, 0.0, 0.0],
                 linear_velocity=[1.5, 0.0, 0.0],
                 angular_velocity=[0.0, 0.0, 0.0],
@@ -309,7 +325,7 @@ class RigidBodyWorld:
         self.add_body(
             create_box_body(
                 name="right_box",
-                half_extents=[0.35, 0.35, 0.35],
+                half_extents=self._two_body_half_extents,
                 position=[1.5, 0.0, 0.0],
                 linear_velocity=[-1.5, 0.0, 0.0],
                 angular_velocity=[0.0, 0.0, 0.0],
@@ -322,23 +338,23 @@ class RigidBodyWorld:
         self.add_body(
             create_box_body(
                 name="point_box",
-                half_extents=[0.22, 0.22, 0.22],
-                position=[-1.2, 0.16, 0.12],
+                half_extents=self._two_body_half_extents,
+                position=[-1.35, 0.38, 0.26],
                 orientation=_quat_from_euler_xyz([18.0, 32.0, 21.0]),
                 linear_velocity=[1.9, 0.0, 0.0],
                 angular_velocity=[0.0, 0.0, 0.0],
-                mass=0.8,
+                mass=1.0,
                 color=[0.2, 0.6, 0.95],
             )
         )
         self.add_body(
             create_box_body(
                 name="face_box",
-                half_extents=[0.48, 0.48, 0.48],
-                position=[0.45, 0.0, 0.0],
-                linear_velocity=[-0.15, 0.0, 0.0],
+                half_extents=self._two_body_half_extents,
+                position=[0.55, 0.0, 0.0],
+                linear_velocity=[-0.25, 0.0, 0.0],
                 angular_velocity=[0.0, 0.0, 0.0],
-                mass=1.4,
+                mass=1.0,
                 color=[0.95, 0.6, 0.2],
             )
         )
@@ -347,7 +363,7 @@ class RigidBodyWorld:
         self.add_body(
             create_box_body(
                 name="edge_box_a",
-                half_extents=[0.28, 0.52, 0.22],
+                half_extents=self._two_body_half_extents,
                 position=[-1.0, 0.24, -0.05],
                 orientation=_quat_from_euler_xyz([0.0, 42.0, 32.0]),
                 linear_velocity=[1.55, -0.05, 0.0],
@@ -359,7 +375,7 @@ class RigidBodyWorld:
         self.add_body(
             create_box_body(
                 name="edge_box_b",
-                half_extents=[0.28, 0.52, 0.22],
+                half_extents=self._two_body_half_extents,
                 position=[1.0, -0.24, 0.05],
                 orientation=_quat_from_euler_xyz([0.0, -42.0, -32.0]),
                 linear_velocity=[-1.55, 0.05, 0.0],
@@ -383,7 +399,7 @@ class RigidBodyWorld:
         self.add_body(
             create_box_body(
                 name="random_box_a",
-                half_extents=[0.3, 0.36, 0.24],
+                half_extents=self._two_body_half_extents,
                 position=[-1.15, left_offset[0], left_offset[1]],
                 orientation=_quat_from_euler_xyz(left_angles),
                 linear_velocity=[left_speed, 0.0, 0.0],
@@ -395,7 +411,7 @@ class RigidBodyWorld:
         self.add_body(
             create_box_body(
                 name="random_box_b",
-                half_extents=[0.34, 0.28, 0.32],
+                half_extents=self._two_body_half_extents,
                 position=[1.15, right_offset[0], right_offset[1]],
                 orientation=_quat_from_euler_xyz(right_angles),
                 linear_velocity=[-right_speed, 0.0, 0.0],

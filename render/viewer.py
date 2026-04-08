@@ -311,6 +311,9 @@ class RigidBodyViewer:
                 self.world.load_demo("two_body_collision")
             elif self.window.event.key == "3":
                 self.world.load_demo("complex_scene")
+            elif self.window.event.key in ("4", "5", "6", "7"):
+                if self.world.state.active_demo == "two_body_collision":
+                    self.world.select_two_body_case_by_key(self.window.event.key)
             elif self.window.event.key == "n" and self.world.state.active_demo == "two_body_collision":
                 self.world.next_two_body_case()
             elif self.window.event.key == "b" and self.world.state.active_demo == "two_body_collision":
@@ -445,5 +448,5 @@ class RigidBodyViewer:
             self.gui.text("Apply force: WASD/QE")
             self.gui.text("Switch demo: 1 / 2 / 3")
             if self.world.state.active_demo == "two_body_collision":
-                self.gui.text("Collision case: B / N")
+                self.gui.text("Collision case: 4/5/6/7 or B/N")
             self.gui.text("Close: Esc")
