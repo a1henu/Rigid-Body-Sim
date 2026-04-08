@@ -218,9 +218,12 @@ class RigidBodySolver:
         if np.dot(normal_world, to_b_world) < 0.0:
             normal_world = -normal_world
 
-        point_a = body_a.support_point_world(normal_world)
-        point_b = body_b.support_point_world(-normal_world)
-        contact_position = 0.5 * (point_a + point_b)
+        contact_position = self._estimate_contact_position(
+            body_a,
+            body_b,
+            normal_world,
+            best_axis,
+        )
 
         return Contact(
             body_a=body_a.body_id,
@@ -231,6 +234,36 @@ class RigidBodySolver:
             feature_id=f"{best_axis.axis_kind}:{best_axis.axis_i}:{best_axis.axis_j}",
         )
 
+    def _estimate_contact_position(
+        self,
+        body_a: RigidBodyState,
+        body_b: RigidBodyState,
+        normal_world: np.ndarray,
+        axis_result: _AxisTestResult,
+    ) -> np.ndarray:
+        if axis_result.axis_kind in {"face_a", "face_b"}:
+            face_center_a = (
+                body_a.position
+                + normal_world * self._support_extent_along_normal(body_a, normal_world)
+            )
+            face_center_b = (
+                body_b.position
+                - normal_world * self._support_extent_along_normal(body_b, normal_world)
+            )
+            return 0.5 * (face_center_a + face_center_b)
+
+        point_a = body_a.support_point_world(normal_world)
+        point_b = body_b.support_point_world(-normal_world)
+        return 0.5 * (point_a + point_b)
+
+    def _support_extent_along_normal(
+        self,
+        body: RigidBodyState,
+        normal_world: np.ndarray,
+    ) -> float:
+        local_normal = body.rotation_matrix().T @ normal_world
+        return float(np.dot(np.abs(local_normal), body.half_extents))
+
     def _resolve_contacts(self, state: WorldState, dt: float) -> None:
         iterations = max(1, self.config.solver_iterations)
         for _ in range(iterations):
@@ -238,8 +271,100 @@ class RigidBodySolver:
                 self._solve_contact(contact, state, dt)
 
     def _solve_contact(self, contact: Contact, state: WorldState, dt: float) -> None:
-        # TODO: impulse-based collision response goes here.
-        _ = contact, state, dt
+        _ = dt
+        body_a = state.get_body(contact.body_a)
+        body_b = state.get_body(contact.body_b)
+
+        inverse_mass_sum = body_a.inverse_mass + body_b.inverse_mass
+        if inverse_mass_sum <= 0.0:
+            return
+
+        normal = safe_normalize(contact.normal)
+        ra = contact.position - body_a.position
+        rb = contact.position - body_b.position
+
+        velocity_a = self._world_point_velocity(body_a, ra)
+        velocity_b = self._world_point_velocity(body_b, rb)
+        relative_velocity = velocity_b - velocity_a
+        normal_speed = np.dot(relative_velocity, normal)
+
+        restitution = min(body_a.restitution, body_b.restitution)
+        if normal_speed < 0.0:
+            impulse_magnitude = self._normal_impulse_magnitude(
+                body_a,
+                body_b,
+                ra,
+                rb,
+                normal,
+                normal_speed,
+                restitution,
+            )
+            if impulse_magnitude > 0.0:
+                impulse = impulse_magnitude * normal
+                self._apply_contact_impulse(body_a, -impulse, ra)
+                self._apply_contact_impulse(body_b, impulse, rb)
+                contact.accumulated_normal_impulse += impulse_magnitude
+
+        self._apply_positional_correction(body_a, body_b, normal, contact.penetration_depth)
+
+    def _world_point_velocity(self, body: RigidBodyState, relative_point: np.ndarray) -> np.ndarray:
+        return body.linear_velocity + np.cross(body.angular_velocity, relative_point)
+
+    def _normal_impulse_magnitude(
+        self,
+        body_a: RigidBodyState,
+        body_b: RigidBodyState,
+        ra: np.ndarray,
+        rb: np.ndarray,
+        normal: np.ndarray,
+        normal_speed: float,
+        restitution: float,
+    ) -> float:
+        angular_term_a = np.cross(body_a.inverse_inertia_world() @ np.cross(ra, normal), ra)
+        angular_term_b = np.cross(body_b.inverse_inertia_world() @ np.cross(rb, normal), rb)
+        effective_mass = (
+            body_a.inverse_mass
+            + body_b.inverse_mass
+            + np.dot(normal, angular_term_a + angular_term_b)
+        )
+        if effective_mass <= 1e-8:
+            return 0.0
+        return max(0.0, -(1.0 + restitution) * normal_speed / effective_mass)
+
+    def _apply_contact_impulse(
+        self,
+        body: RigidBodyState,
+        impulse: np.ndarray,
+        relative_point: np.ndarray,
+    ) -> None:
+        if not body.is_dynamic:
+            return
+        body.linear_velocity = body.linear_velocity + impulse * body.inverse_mass
+        body.angular_velocity = (
+            body.angular_velocity
+            + body.inverse_inertia_world() @ np.cross(relative_point, impulse)
+        )
+
+    def _apply_positional_correction(
+        self,
+        body_a: RigidBodyState,
+        body_b: RigidBodyState,
+        normal: np.ndarray,
+        penetration_depth: float,
+    ) -> None:
+        inverse_mass_sum = body_a.inverse_mass + body_b.inverse_mass
+        if inverse_mass_sum <= 0.0:
+            return
+
+        slop = 1e-4
+        percent = 0.8
+        correction_magnitude = percent * max(penetration_depth - slop, 0.0) / inverse_mass_sum
+        correction = correction_magnitude * normal
+
+        if body_a.is_dynamic:
+            body_a.position = body_a.position - correction * body_a.inverse_mass
+        if body_b.is_dynamic:
+            body_b.position = body_b.position + correction * body_b.inverse_mass
 
     def _integrate_positions(self, state: WorldState, dt: float) -> None:
         for body in state.bodies:
