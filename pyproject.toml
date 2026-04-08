@@ -1,0 +1,19 @@
+[project]
+name = "rigid-body-sim"
+version = "0.1.0"
+description = "Taichi rigid body simulation framework for the PhySim4CG lab."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "numpy==1.23.5",
+    "scipy==1.10.1",
+    "taichi==1.7.4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3,<9",
+]
+
+[tool.uv]
+package = false
