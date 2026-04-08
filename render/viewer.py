@@ -313,6 +313,11 @@ class RigidBodyViewer:
                 self.world.next_two_body_case()
             elif self._edge_pressed("case_prev", "b"):
                 self.world.previous_two_body_case()
+        elif self.world.state.active_demo == "complex_scene":
+            if self._edge_pressed("select_next", "n"):
+                self.world.select_next_dynamic_body()
+            elif self._edge_pressed("select_prev", "b"):
+                self.world.select_previous_dynamic_body()
 
         primary_body_id = self.world.get_primary_body_id()
         if primary_body_id is None:
@@ -402,11 +407,12 @@ class RigidBodyViewer:
             orientations[body_id] = body.orientation.astype(np.float32)
             half_extents[body_id] = body.half_extents.astype(np.float32)
             colors[body_id] = body.color.astype(np.float32)
-            center_colors[body_id] = (
-                np.array([1.0, 0.62, 0.26], dtype=np.float32)
-                if body.is_dynamic
-                else np.array([0.62, 0.66, 0.74], dtype=np.float32)
-            )
+            if body.body_id == self.world.get_selected_body_id():
+                center_colors[body_id] = np.array([0.5, 1.0, 0.52], dtype=np.float32)
+            elif body.is_dynamic:
+                center_colors[body_id] = np.array([1.0, 0.62, 0.26], dtype=np.float32)
+            else:
+                center_colors[body_id] = np.array([0.62, 0.66, 0.74], dtype=np.float32)
 
         self.buffers.body_positions.from_numpy(positions)
         self.buffers.body_orientations.from_numpy(orientations)
@@ -428,6 +434,8 @@ class RigidBodyViewer:
             self.gui.text(f"Taichi arch: {_TAICHI_ARCH_NAME}")
             if self.world.state.active_demo == "two_body_collision":
                 self.gui.text(f"Case: {self.world.active_two_body_case().name}")
+            if self.world.state.active_demo == "complex_scene" and primary_body_id is not None:
+                self.gui.text(f"Selected body: {self.world.state.get_body(primary_body_id).name}")
 
             if primary_body_id is not None:
                 body = self.world.state.get_body(primary_body_id)
@@ -451,4 +459,6 @@ class RigidBodyViewer:
             self.gui.text("Switch demo: Tab")
             if self.world.state.active_demo == "two_body_collision":
                 self.gui.text("Collision case: B / N")
+            elif self.world.state.active_demo == "complex_scene":
+                self.gui.text("Select body: B / N")
             self.gui.text("Close: Esc")

@@ -61,6 +61,7 @@ class RigidBodyWorld:
         self._two_body_case_order: list[str] = []
         self._active_two_body_case_name = "face_face"
         self._two_body_half_extents = np.array([0.35, 0.35, 0.35], dtype=np.float64)
+        self._selected_body_id: int | None = None
         self._initial_config = self.config.clone()
         self._initial_snapshots: dict[int, RigidBodySnapshot] = {}
         self._random_case_seed = 20260408
@@ -160,6 +161,7 @@ class RigidBodyWorld:
             self.state.demo_description = (
                 f"{definition.description} Case={case.name}: {case.description}"
             )
+        self._select_default_dynamic_body()
         self.capture_initial_state()
         self._initial_config = self.config.clone()
 
@@ -180,6 +182,7 @@ class RigidBodyWorld:
         self.state.time = 0.0
         self.state.frame = 0
         self.state.paused = False
+        self._select_default_dynamic_body()
 
     def next_demo(self) -> None:
         current_index = self._demo_order.index(self.state.active_demo)
@@ -195,6 +198,48 @@ class RigidBodyWorld:
         body.body_id = len(self.state.bodies)
         self.state.bodies.append(body)
         return body.body_id
+
+    def _dynamic_body_ids(self) -> list[int]:
+        return [body.body_id for body in self.state.bodies if body.is_dynamic]
+
+    def _select_default_dynamic_body(self) -> None:
+        dynamic_ids = self._dynamic_body_ids()
+        self._selected_body_id = dynamic_ids[0] if dynamic_ids else None
+
+    def get_selected_body_id(self) -> int | None:
+        if self._selected_body_id is None:
+            self._select_default_dynamic_body()
+        return self._selected_body_id
+
+    def get_selected_body(self) -> RigidBodyState | None:
+        body_id = self.get_selected_body_id()
+        if body_id is None:
+            return None
+        return self.state.get_body(body_id)
+
+    def select_next_dynamic_body(self) -> None:
+        dynamic_ids = self._dynamic_body_ids()
+        if not dynamic_ids:
+            self._selected_body_id = None
+            return
+        current = self.get_selected_body_id()
+        if current not in dynamic_ids:
+            self._selected_body_id = dynamic_ids[0]
+            return
+        index = dynamic_ids.index(current)
+        self._selected_body_id = dynamic_ids[(index + 1) % len(dynamic_ids)]
+
+    def select_previous_dynamic_body(self) -> None:
+        dynamic_ids = self._dynamic_body_ids()
+        if not dynamic_ids:
+            self._selected_body_id = None
+            return
+        current = self.get_selected_body_id()
+        if current not in dynamic_ids:
+            self._selected_body_id = dynamic_ids[0]
+            return
+        index = dynamic_ids.index(current)
+        self._selected_body_id = dynamic_ids[(index - 1) % len(dynamic_ids)]
 
     def active_two_body_case(self) -> TwoBodyCaseDefinition:
         return self._two_body_cases[self._active_two_body_case_name]
@@ -225,10 +270,7 @@ class RigidBodyWorld:
         self.select_two_body_case(self._two_body_case_order[prev_index])
 
     def get_primary_body_id(self) -> int | None:
-        for body in self.state.bodies:
-            if body.is_dynamic:
-                return body.body_id
-        return None
+        return self.get_selected_body_id()
 
     def queue_command(self, command: InteractionCommand) -> None:
         self.state.pending_commands.append(command)
