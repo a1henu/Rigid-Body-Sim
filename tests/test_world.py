@@ -55,3 +55,46 @@ def test_next_demo_cycles_through_registered_demos():
 
     world.next_demo()
     assert world.state.active_demo == "single_body"
+
+
+def test_complex_scene_configures_gravity_boundaries_and_four_dynamic_boxes():
+    world = RigidBodyWorld(demo_name="complex_scene")
+
+    assert world.config.enable_gravity is True
+    assert world.config.substeps == 4
+    assert world.config.solver_iterations == 12
+    assert len(world.state.bodies) == 7
+
+    static_bodies = world.state.bodies[:3]
+    dynamic_bodies = world.state.bodies[3:]
+
+    assert all(not body.is_dynamic for body in static_bodies)
+    assert all(body.is_dynamic for body in dynamic_bodies)
+    assert all(body.user_data.get("environment_boundary", False) for body in static_bodies)
+    assert world.get_selected_body().name == "striker"
+
+
+def test_complex_scene_selection_cycles_over_dynamic_bodies_only():
+    world = RigidBodyWorld(demo_name="complex_scene")
+
+    names = []
+    for _ in range(5):
+        names.append(world.get_selected_body().name)
+        world.select_next_dynamic_body()
+
+    assert names == ["striker", "cluster_a", "cluster_b", "cluster_c", "striker"]
+
+
+def test_complex_scene_produces_contacts_early_without_immediate_fallthrough():
+    world = RigidBodyWorld(demo_name="complex_scene")
+    contact_frames = 0
+
+    for _ in range(60):
+        world.step()
+        if world.state.contacts:
+            contact_frames += 1
+
+    assert contact_frames > 0
+    for body in world.state.bodies[3:]:
+        bottom = body.position[1] - body.half_extents[1]
+        assert bottom > -1.2
