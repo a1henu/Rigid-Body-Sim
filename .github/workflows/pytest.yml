@@ -22,4 +22,4 @@ jobs:
           pip install numpy scipy taichi pytest
 
       - name: Run tests
-        run: pytest -v test
+        run: pytest -v tests
