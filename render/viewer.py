@@ -108,6 +108,7 @@ if ti is not None:
 
         def __init__(self, body_capacity: int):
             self.body_capacity = max(1, int(body_capacity))
+            self.active_body_count = ti.field(dtype=ti.i32, shape=())
             self.body_positions = ti.Vector.field(3, dtype=ti.f32, shape=self.body_capacity)
             self.body_orientations = ti.Vector.field(4, dtype=ti.f32, shape=self.body_capacity)
             self.body_half_extents = ti.Vector.field(3, dtype=ti.f32, shape=self.body_capacity)
@@ -170,8 +171,8 @@ if ti is not None:
             return v / ti.max(v.norm(), 1e-8)
 
         @ti.kernel
-        def update_transforms(self, body_count: ti.i32):
-            for body_id in range(body_count):
+        def update_transforms(self):
+            for body_id in range(self.active_body_count[None]):
                 position = self.body_positions[body_id]
                 half_extents = self.body_half_extents[body_id]
                 rotation = self._quat_to_mat3(self.body_orientations[body_id])
@@ -403,7 +404,8 @@ class RigidBodyViewer:
         self.buffers.body_half_extents.from_numpy(half_extents)
         self.buffers.body_colors.from_numpy(colors)
         self.buffers.center_colors.from_numpy(center_colors)
-        self.buffers.update_transforms(body_count)
+        self.buffers.active_body_count[None] = body_count
+        self.buffers.update_transforms()
 
     def _draw_overlay(self) -> None:
         assert self.gui is not None
@@ -437,4 +439,3 @@ class RigidBodyViewer:
             self.gui.text("Apply force: WASD/QE")
             self.gui.text("Switch demo: 1 / 2 / 3")
             self.gui.text("Close: Esc")
-
