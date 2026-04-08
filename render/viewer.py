@@ -311,6 +311,10 @@ class RigidBodyViewer:
                 self.world.load_demo("two_body_collision")
             elif self.window.event.key == "3":
                 self.world.load_demo("complex_scene")
+            elif self.window.event.key == "n" and self.world.state.active_demo == "two_body_collision":
+                self.world.next_two_body_case()
+            elif self.window.event.key == "b" and self.world.state.active_demo == "two_body_collision":
+                self.world.previous_two_body_case()
 
         primary_body_id = self.world.get_primary_body_id()
         if primary_body_id is None:
@@ -417,6 +421,8 @@ class RigidBodyViewer:
             self.gui.text(f"Time: {self.world.state.time:.3f}")
             self.gui.text(f"FPS: {self.stats.fps_smoothed:.1f}")
             self.gui.text(f"Taichi arch: {_TAICHI_ARCH_NAME}")
+            if self.world.state.active_demo == "two_body_collision":
+                self.gui.text(f"Case: {self.world.active_two_body_case().name}")
 
             if primary_body_id is not None:
                 body = self.world.state.get_body(primary_body_id)
@@ -438,4 +444,6 @@ class RigidBodyViewer:
             self.gui.text("Move camera: RMB + WASD/EQ")
             self.gui.text("Apply force: WASD/QE")
             self.gui.text("Switch demo: 1 / 2 / 3")
+            if self.world.state.active_demo == "two_body_collision":
+                self.gui.text("Collision case: B / N")
             self.gui.text("Close: Esc")

@@ -33,6 +33,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Sleep for one simulation step between rendered frames.",
     )
+    parser.add_argument(
+        "--collision-case",
+        choices=("point_face", "edge_edge", "face_face", "random_pose"),
+        default=None,
+        help="Select a preset setup for the two-body collision demo.",
+    )
     return parser
 
 
@@ -40,6 +46,8 @@ def main() -> None:
     args = build_arg_parser().parse_args()
     config = SimulationConfig(time_step=args.dt, substeps=args.substeps)
     world = RigidBodyWorld(config=config, demo_name=args.demo)
+    if args.collision_case is not None:
+        world.select_two_body_case(args.collision_case)
 
     if args.headless:
         headless_steps = args.steps if args.steps > 0 else 180
