@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Iterable
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -11,7 +12,17 @@ from sim.state import (
     SimulationConfig,
     WorldState,
     integrate_quat_wxyz,
+    safe_normalize,
 )
+
+
+@dataclass(slots=True)
+class _AxisTestResult:
+    overlap: float
+    axis_world: np.ndarray
+    axis_kind: str
+    axis_i: int
+    axis_j: int = -1
 
 
 class RigidBodySolver:
@@ -116,9 +127,109 @@ class RigidBodySolver:
         body_a: RigidBodyState,
         body_b: RigidBodyState,
     ) -> Iterable[Contact]:
-        # TODO: SAT/FCL-based box-box collision detection goes here.
-        _ = body_a, body_b
-        return []
+        contact = self._detect_box_box_sat(body_a, body_b)
+        if contact is None:
+            return []
+        return [contact]
+
+    def _detect_box_box_sat(
+        self,
+        body_a: RigidBodyState,
+        body_b: RigidBodyState,
+    ) -> Contact | None:
+        rotation_a = body_a.rotation_matrix()
+        rotation_b = body_b.rotation_matrix()
+        half_a = body_a.half_extents
+        half_b = body_b.half_extents
+
+        to_b_world = body_b.position - body_a.position
+        relative_rotation = rotation_a.T @ rotation_b
+        to_b_in_a = rotation_a.T @ to_b_world
+
+        epsilon = 1e-8
+        abs_relative_rotation = np.abs(relative_rotation) + epsilon
+        best_axis: _AxisTestResult | None = None
+
+        def consider_axis(
+            overlap: float,
+            axis_world: np.ndarray,
+            axis_kind: str,
+            axis_i: int,
+            axis_j: int = -1,
+        ) -> bool:
+            nonlocal best_axis
+            if overlap < 0.0:
+                return False
+            axis_world = safe_normalize(axis_world)
+            if np.linalg.norm(axis_world) < 1e-8:
+                return True
+            if best_axis is None or overlap < best_axis.overlap:
+                best_axis = _AxisTestResult(
+                    overlap=float(overlap),
+                    axis_world=axis_world,
+                    axis_kind=axis_kind,
+                    axis_i=axis_i,
+                    axis_j=axis_j,
+                )
+            return True
+
+        for i in range(3):
+            ra = half_a[i]
+            rb = np.dot(half_b, abs_relative_rotation[i, :])
+            overlap = ra + rb - abs(to_b_in_a[i])
+            if not consider_axis(overlap, rotation_a[:, i], "face_a", i):
+                return None
+
+        for j in range(3):
+            axis_b_in_a = relative_rotation[:, j]
+            ra = np.dot(half_a, abs_relative_rotation[:, j])
+            rb = half_b[j]
+            distance = abs(np.dot(to_b_in_a, axis_b_in_a))
+            overlap = ra + rb - distance
+            if not consider_axis(overlap, rotation_b[:, j], "face_b", j):
+                return None
+
+        for i in range(3):
+            i1 = (i + 1) % 3
+            i2 = (i + 2) % 3
+            for j in range(3):
+                j1 = (j + 1) % 3
+                j2 = (j + 2) % 3
+                ra = half_a[i1] * abs_relative_rotation[i2, j] + half_a[i2] * abs_relative_rotation[i1, j]
+                rb = half_b[j1] * abs_relative_rotation[i, j2] + half_b[j2] * abs_relative_rotation[i, j1]
+                distance = abs(
+                    to_b_in_a[i2] * relative_rotation[i1, j]
+                    - to_b_in_a[i1] * relative_rotation[i2, j]
+                )
+                overlap = ra + rb - distance
+                if not consider_axis(
+                    overlap,
+                    np.cross(rotation_a[:, i], rotation_b[:, j]),
+                    "edge_cross",
+                    i,
+                    j,
+                ):
+                    return None
+
+        if best_axis is None:
+            return None
+
+        normal_world = best_axis.axis_world
+        if np.dot(normal_world, to_b_world) < 0.0:
+            normal_world = -normal_world
+
+        point_a = body_a.support_point_world(normal_world)
+        point_b = body_b.support_point_world(-normal_world)
+        contact_position = 0.5 * (point_a + point_b)
+
+        return Contact(
+            body_a=body_a.body_id,
+            body_b=body_b.body_id,
+            position=contact_position,
+            normal=normal_world,
+            penetration_depth=best_axis.overlap,
+            feature_id=f"{best_axis.axis_kind}:{best_axis.axis_i}:{best_axis.axis_j}",
+        )
 
     def _resolve_contacts(self, state: WorldState, dt: float) -> None:
         iterations = max(1, self.config.solver_iterations)

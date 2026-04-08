@@ -110,6 +110,12 @@ def box_local_corners(half_extents: Any) -> np.ndarray:
     )
 
 
+def signed_box_support(half_extents: Any, direction_local: Any) -> np.ndarray:
+    half = _as_vec3(half_extents)
+    direction = np.asarray(direction_local, dtype=np.float64)
+    return np.where(direction >= 0.0, half, -half)
+
+
 def _as_vec3(value: Any, *, default: np.ndarray | None = None) -> np.ndarray:
     if value is None:
         value = default if default is not None else vec3()
@@ -207,6 +213,13 @@ class RigidBodyState:
     def world_corners(self) -> np.ndarray:
         local_corners = box_local_corners(self.half_extents)
         return (self.rotation_matrix() @ local_corners.T).T + self.position
+
+    def support_point_world(self, direction_world: Any) -> np.ndarray:
+        direction_world = np.asarray(direction_world, dtype=np.float64)
+        rotation = self.rotation_matrix()
+        direction_local = rotation.T @ direction_world
+        local_point = signed_box_support(self.half_extents, direction_local)
+        return self.position + rotation @ local_point
 
     def capture_snapshot(self) -> RigidBodySnapshot:
         return RigidBodySnapshot(
