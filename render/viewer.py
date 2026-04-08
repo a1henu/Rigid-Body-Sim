@@ -215,7 +215,7 @@ class RigidBodyViewer:
         *,
         realtime: bool = False,
         resolution: tuple[int, int] = (1280, 720),
-        force_strength: float = 12.0,
+        force_strength: float = 4.0,
     ):
         self.world = world
         self.realtime = realtime
