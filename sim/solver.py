@@ -149,6 +149,7 @@ class RigidBodySolver:
         epsilon = 1e-8
         abs_relative_rotation = np.abs(relative_rotation) + epsilon
         best_axis: _AxisTestResult | None = None
+        skip_edge_cross_axes = self._should_skip_edge_cross_axes(body_a, body_b)
 
         def consider_axis(
             overlap: float,
@@ -189,27 +190,28 @@ class RigidBodySolver:
             if not consider_axis(overlap, rotation_b[:, j], "face_b", j):
                 return None
 
-        for i in range(3):
-            i1 = (i + 1) % 3
-            i2 = (i + 2) % 3
-            for j in range(3):
-                j1 = (j + 1) % 3
-                j2 = (j + 2) % 3
-                ra = half_a[i1] * abs_relative_rotation[i2, j] + half_a[i2] * abs_relative_rotation[i1, j]
-                rb = half_b[j1] * abs_relative_rotation[i, j2] + half_b[j2] * abs_relative_rotation[i, j1]
-                distance = abs(
-                    to_b_in_a[i2] * relative_rotation[i1, j]
-                    - to_b_in_a[i1] * relative_rotation[i2, j]
-                )
-                overlap = ra + rb - distance
-                if not consider_axis(
-                    overlap,
-                    np.cross(rotation_a[:, i], rotation_b[:, j]),
-                    "edge_cross",
-                    i,
-                    j,
-                ):
-                    return None
+        if not skip_edge_cross_axes:
+            for i in range(3):
+                i1 = (i + 1) % 3
+                i2 = (i + 2) % 3
+                for j in range(3):
+                    j1 = (j + 1) % 3
+                    j2 = (j + 2) % 3
+                    ra = half_a[i1] * abs_relative_rotation[i2, j] + half_a[i2] * abs_relative_rotation[i1, j]
+                    rb = half_b[j1] * abs_relative_rotation[i, j2] + half_b[j2] * abs_relative_rotation[i, j1]
+                    distance = abs(
+                        to_b_in_a[i2] * relative_rotation[i1, j]
+                        - to_b_in_a[i1] * relative_rotation[i2, j]
+                    )
+                    overlap = ra + rb - distance
+                    if not consider_axis(
+                        overlap,
+                        np.cross(rotation_a[:, i], rotation_b[:, j]),
+                        "edge_cross",
+                        i,
+                        j,
+                    ):
+                        return None
 
         if best_axis is None:
             return None
@@ -233,6 +235,16 @@ class RigidBodySolver:
             penetration_depth=best_axis.overlap,
             feature_id=f"{best_axis.axis_kind}:{best_axis.axis_i}:{best_axis.axis_j}",
         )
+
+    def _should_skip_edge_cross_axes(
+        self,
+        body_a: RigidBodyState,
+        body_b: RigidBodyState,
+    ) -> bool:
+        return self._is_environment_boundary(body_a) or self._is_environment_boundary(body_b)
+
+    def _is_environment_boundary(self, body: RigidBodyState) -> bool:
+        return (not body.is_dynamic) and bool(body.user_data.get("environment_boundary", False))
 
     def _estimate_contact_position(
         self,
@@ -289,6 +301,8 @@ class RigidBodySolver:
         normal_speed = np.dot(relative_velocity, normal)
 
         restitution = min(body_a.restitution, body_b.restitution)
+        if abs(normal_speed) < 0.5:
+            restitution = 0.0
         if normal_speed < 0.0:
             impulse_magnitude = self._normal_impulse_magnitude(
                 body_a,
@@ -304,6 +318,19 @@ class RigidBodySolver:
                 self._apply_contact_impulse(body_a, -impulse, ra)
                 self._apply_contact_impulse(body_b, impulse, rb)
                 contact.accumulated_normal_impulse += impulse_magnitude
+
+                velocity_a = self._world_point_velocity(body_a, ra)
+                velocity_b = self._world_point_velocity(body_b, rb)
+                relative_velocity = velocity_b - velocity_a
+                self._apply_friction_impulse(
+                    body_a,
+                    body_b,
+                    ra,
+                    rb,
+                    relative_velocity,
+                    normal,
+                    impulse_magnitude,
+                )
 
         self._apply_positional_correction(body_a, body_b, normal, contact.penetration_depth)
 
@@ -344,6 +371,43 @@ class RigidBodySolver:
             body.angular_velocity
             + body.inverse_inertia_world() @ np.cross(relative_point, impulse)
         )
+
+    def _apply_friction_impulse(
+        self,
+        body_a: RigidBodyState,
+        body_b: RigidBodyState,
+        ra: np.ndarray,
+        rb: np.ndarray,
+        relative_velocity: np.ndarray,
+        normal: np.ndarray,
+        normal_impulse_magnitude: float,
+    ) -> None:
+        tangential_velocity = relative_velocity - np.dot(relative_velocity, normal) * normal
+        tangent_norm = np.linalg.norm(tangential_velocity)
+        if tangent_norm < 1e-8:
+            return
+
+        tangent = tangential_velocity / tangent_norm
+        angular_term_a = np.cross(body_a.inverse_inertia_world() @ np.cross(ra, tangent), ra)
+        angular_term_b = np.cross(body_b.inverse_inertia_world() @ np.cross(rb, tangent), rb)
+        effective_mass = (
+            body_a.inverse_mass
+            + body_b.inverse_mass
+            + np.dot(tangent, angular_term_a + angular_term_b)
+        )
+        if effective_mass <= 1e-8:
+            return
+
+        jt = -np.dot(relative_velocity, tangent) / effective_mass
+        friction_coefficient = min(body_a.friction, body_b.friction)
+        max_friction = friction_coefficient * normal_impulse_magnitude
+        jt = float(np.clip(jt, -max_friction, max_friction))
+        if abs(jt) < 1e-10:
+            return
+
+        friction_impulse = jt * tangent
+        self._apply_contact_impulse(body_a, -friction_impulse, ra)
+        self._apply_contact_impulse(body_b, friction_impulse, rb)
 
     def _apply_positional_correction(
         self,

@@ -423,14 +423,20 @@ class RigidBodyWorld:
 
     def _build_complex_scene_demo(self) -> None:
         self.config.enable_gravity = True
-        self.config.solver_iterations = 8
+        self.config.substeps = 4
+        self.config.solver_iterations = 12
+        self.config.linear_damping = 0.05
+        self.config.angular_damping = 0.08
         self.add_body(
             create_box_body(
                 name="floor",
                 half_extents=[4.0, 0.2, 4.0],
                 position=[0.0, -1.25, 0.0],
                 motion_type=MotionType.STATIC,
+                restitution=0.0,
+                friction=0.9,
                 color=[0.45, 0.45, 0.45],
+                user_data={"environment_boundary": True},
             )
         )
         self.add_body(
@@ -439,7 +445,10 @@ class RigidBodyWorld:
                 half_extents=[0.2, 2.0, 4.0],
                 position=[-3.5, 0.5, 0.0],
                 motion_type=MotionType.STATIC,
+                restitution=0.0,
+                friction=0.8,
                 color=[0.55, 0.55, 0.6],
+                user_data={"environment_boundary": True},
             )
         )
         self.add_body(
@@ -448,15 +457,18 @@ class RigidBodyWorld:
                 half_extents=[0.2, 2.0, 4.0],
                 position=[3.5, 0.5, 0.0],
                 motion_type=MotionType.STATIC,
+                restitution=0.0,
+                friction=0.8,
                 color=[0.55, 0.55, 0.6],
+                user_data={"environment_boundary": True},
             )
         )
 
         dynamic_boxes = [
-            ("box_a", [-0.8, 1.0, 0.0], [0.8, 0.0, 0.0], [0.8, 0.25, 0.2]),
-            ("box_b", [0.9, 1.6, -0.2], [-0.5, 0.0, 0.0], [0.25, 0.7, 0.4]),
-            ("box_c", [0.1, 2.3, 0.5], [0.0, 0.0, 0.0], [0.3, 0.8, 0.5]),
-            ("box_d", [-0.2, 3.0, -0.4], [0.0, 0.0, 0.0], [0.9, 0.5, 0.3]),
+            ("striker", [-2.1, -0.74, 0.0], [2.2, 0.0, 0.0], [0.9, 0.35, 0.25]),
+            ("cluster_a", [-0.65, -0.74, 0.0], [0.0, 0.0, 0.0], [0.25, 0.72, 0.44]),
+            ("cluster_b", [0.1, -0.74, 0.0], [0.0, 0.0, 0.0], [0.3, 0.82, 0.54]),
+            ("cluster_c", [0.85, -0.74, 0.0], [0.0, 0.0, 0.0], [0.92, 0.56, 0.34]),
         ]
         for name, position, linear_velocity, color in dynamic_boxes:
             self.add_body(
@@ -465,8 +477,10 @@ class RigidBodyWorld:
                     half_extents=[0.3, 0.3, 0.3],
                     position=position,
                     linear_velocity=linear_velocity,
-                    angular_velocity=vec3(),
+                    angular_velocity=[0.0, 0.0, 0.0],
                     mass=1.0,
+                    restitution=0.02,
+                    friction=0.75,
                     color=color,
                 )
             )
