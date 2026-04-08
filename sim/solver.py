@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from sim.state import CommandType, Contact, RigidBodyState, SimulationConfig, WorldState
+import numpy as np
+
+from sim.state import (
+    CommandType,
+    Contact,
+    RigidBodyState,
+    SimulationConfig,
+    WorldState,
+    integrate_quat_wxyz,
+)
 
 
 class RigidBodySolver:
@@ -53,7 +62,9 @@ class RigidBodySolver:
             body = state.get_body(command.body_id)
             if command.command_type == CommandType.APPLY_FORCE:
                 body.force_accumulator += command.value
-                # TODO: if world_point is provided, convert off-center force to torque.
+                if command.world_point is not None:
+                    lever_arm = command.world_point - body.position
+                    body.torque_accumulator += np.cross(lever_arm, command.value)
             elif command.command_type == CommandType.APPLY_TORQUE:
                 body.torque_accumulator += command.value
             elif command.command_type == CommandType.APPLY_IMPULSE:
@@ -76,8 +87,16 @@ class RigidBodySolver:
                 self._integrate_body_velocity(body, dt)
 
     def _integrate_body_velocity(self, body: RigidBodyState, dt: float) -> None:
-        # TODO: explicit Euler update for linear/angular velocity.
-        _ = body, dt
+        linear_acceleration = body.force_accumulator * body.inverse_mass
+        angular_acceleration = body.inverse_inertia_world() @ body.torque_accumulator
+
+        body.linear_velocity = body.linear_velocity + dt * linear_acceleration
+        body.angular_velocity = body.angular_velocity + dt * angular_acceleration
+
+        linear_damping = max(0.0, 1.0 - self.config.linear_damping * dt)
+        angular_damping = max(0.0, 1.0 - self.config.angular_damping * dt)
+        body.linear_velocity *= linear_damping
+        body.angular_velocity *= angular_damping
 
     def _detect_collisions(self, state: WorldState) -> list[Contact]:
         contacts: list[Contact] = []
@@ -117,8 +136,8 @@ class RigidBodySolver:
                 self._integrate_body_pose(body, dt)
 
     def _integrate_body_pose(self, body: RigidBodyState, dt: float) -> None:
-        # TODO: explicit Euler update for position and quaternion orientation.
-        _ = body, dt
+        body.position = body.position + dt * body.linear_velocity
+        body.orientation = integrate_quat_wxyz(body.orientation, body.angular_velocity, dt)
 
     def _end_step(self, state: WorldState, dt: float) -> None:
         state.time += dt

@@ -20,6 +20,75 @@ def mat3_identity() -> np.ndarray:
     return np.eye(3, dtype=np.float64)
 
 
+def safe_normalize(v: Any, eps: float = 1e-12) -> np.ndarray:
+    arr = np.asarray(v, dtype=np.float64)
+    norm = np.linalg.norm(arr)
+    if norm < eps:
+        return np.zeros_like(arr, dtype=np.float64)
+    return arr / norm
+
+
+def quat_normalize_wxyz(q: Any, eps: float = 1e-12) -> np.ndarray:
+    arr = np.asarray(q, dtype=np.float64)
+    norm = np.linalg.norm(arr)
+    if norm < eps:
+        return quat_identity_wxyz()
+    return arr / norm
+
+
+def quat_conjugate_wxyz(q: Any) -> np.ndarray:
+    arr = np.asarray(q, dtype=np.float64)
+    return np.array([arr[0], -arr[1], -arr[2], -arr[3]], dtype=np.float64)
+
+
+def quat_mul_wxyz(q1: Any, q2: Any) -> np.ndarray:
+    a = np.asarray(q1, dtype=np.float64)
+    b = np.asarray(q2, dtype=np.float64)
+    w1, x1, y1, z1 = a
+    w2, x2, y2, z2 = b
+    return np.array(
+        [
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+        ],
+        dtype=np.float64,
+    )
+
+
+def quat_to_mat3_wxyz(q: Any) -> np.ndarray:
+    w, x, y, z = quat_normalize_wxyz(q)
+    xx = x * x
+    yy = y * y
+    zz = z * z
+    xy = x * y
+    xz = x * z
+    yz = y * z
+    wx = w * x
+    wy = w * y
+    wz = w * z
+    return np.array(
+        [
+            [1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy)],
+            [2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx)],
+            [2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy)],
+        ],
+        dtype=np.float64,
+    )
+
+
+def quat_rotate_wxyz(q: Any, v: Any) -> np.ndarray:
+    return quat_to_mat3_wxyz(q) @ np.asarray(v, dtype=np.float64)
+
+
+def integrate_quat_wxyz(q: Any, omega_world: Any, dt: float) -> np.ndarray:
+    omega = np.asarray(omega_world, dtype=np.float64)
+    omega_quat = np.array([0.0, omega[0], omega[1], omega[2]], dtype=np.float64)
+    q_dot = 0.5 * quat_mul_wxyz(omega_quat, np.asarray(q, dtype=np.float64))
+    return quat_normalize_wxyz(np.asarray(q, dtype=np.float64) + float(dt) * q_dot)
+
+
 def _as_vec3(value: Any, *, default: np.ndarray | None = None) -> np.ndarray:
     if value is None:
         value = default if default is not None else vec3()
@@ -105,6 +174,15 @@ class RigidBodyState:
         self.force_accumulator.fill(0.0)
         self.torque_accumulator.fill(0.0)
 
+    def rotation_matrix(self) -> np.ndarray:
+        return quat_to_mat3_wxyz(self.orientation)
+
+    def inverse_inertia_world(self) -> np.ndarray:
+        if not self.is_dynamic:
+            return np.zeros((3, 3), dtype=np.float64)
+        rotation = self.rotation_matrix()
+        return rotation @ self.inverse_inertia_body @ rotation.T
+
     def capture_snapshot(self) -> RigidBodySnapshot:
         return RigidBodySnapshot(
             position=self.position.copy(),
@@ -159,10 +237,25 @@ class WorldState:
         raise KeyError(f"unknown body id {body_id}")
 
 
-def placeholder_box_inertia(mass: float) -> tuple[np.ndarray, np.ndarray]:
-    # TODO: replace this isotropic placeholder with the exact box inertia tensor.
-    inertia = np.eye(3, dtype=np.float64) * max(mass, 1e-8)
-    inverse_inertia = np.eye(3, dtype=np.float64) / max(mass, 1e-8)
+def box_inertia_tensor(mass: float, half_extents: Any) -> tuple[np.ndarray, np.ndarray]:
+    hx, hy, hz = _as_vec3(half_extents)
+    coeff = mass / 3.0
+    inertia_diag = np.array(
+        [
+            coeff * (hy * hy + hz * hz),
+            coeff * (hx * hx + hz * hz),
+            coeff * (hx * hx + hy * hy),
+        ],
+        dtype=np.float64,
+    )
+    inertia = np.diag(inertia_diag)
+    inverse_diag = np.divide(
+        1.0,
+        inertia_diag,
+        out=np.zeros_like(inertia_diag),
+        where=np.abs(inertia_diag) > 1e-12,
+    )
+    inverse_inertia = np.diag(inverse_diag)
     return inertia, inverse_inertia
 
 
@@ -190,7 +283,7 @@ def create_box_body(
     else:
         resolved_mass = float(mass)
         inverse_mass = 1.0 / max(resolved_mass, 1e-8)
-        inertia_body, inverse_inertia_body = placeholder_box_inertia(resolved_mass)
+        inertia_body, inverse_inertia_body = box_inertia_tensor(resolved_mass, half_extents)
 
     return RigidBodyState(
         name=name,
