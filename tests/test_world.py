@@ -98,3 +98,16 @@ def test_complex_scene_produces_contacts_early_without_immediate_fallthrough():
     for body in world.state.bodies[3:]:
         bottom = body.position[1] - body.half_extents[1]
         assert bottom > -1.2
+
+
+def test_complex_scene_settles_without_explosive_jitter():
+    world = RigidBodyWorld(demo_name="complex_scene")
+
+    for _ in range(240):
+        world.step()
+
+    dynamic_bodies = world.state.bodies[3:]
+    assert any(body.is_sleeping for body in dynamic_bodies)
+    for body in dynamic_bodies:
+        assert np.linalg.norm(body.linear_velocity) < 1.0
+        assert np.linalg.norm(body.angular_velocity) < 2.5

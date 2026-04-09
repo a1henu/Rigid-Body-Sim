@@ -46,6 +46,7 @@ class RigidBodySolver:
         if self.config.enable_collisions:
             state.contacts = self._detect_collisions(state)
             self._resolve_contacts(state, step_dt)
+            self._stabilize_boundary_contacts(state, step_dt)
         else:
             state.contacts.clear()
         self._integrate_positions(state, step_dt)
@@ -332,6 +333,7 @@ class RigidBodySolver:
                     relative_velocity,
                     normal,
                     impulse_magnitude,
+                    friction_scale=self._friction_scale_for_contact(body_a, body_b, normal),
                 )
 
         self._apply_positional_correction(body_a, body_b, normal, contact.penetration_depth)
@@ -385,6 +387,7 @@ class RigidBodySolver:
         relative_velocity: np.ndarray,
         normal: np.ndarray,
         normal_impulse_magnitude: float,
+        friction_scale: float = 1.0,
     ) -> None:
         tangential_velocity = relative_velocity - np.dot(relative_velocity, normal) * normal
         tangent_norm = np.linalg.norm(tangential_velocity)
@@ -403,7 +406,7 @@ class RigidBodySolver:
             return
 
         jt = -np.dot(relative_velocity, tangent) / effective_mass
-        friction_coefficient = min(body_a.friction, body_b.friction)
+        friction_coefficient = friction_scale * min(body_a.friction, body_b.friction)
         max_friction = friction_coefficient * normal_impulse_magnitude
         jt = float(np.clip(jt, -max_friction, max_friction))
         if abs(jt) < 1e-10:
@@ -438,6 +441,65 @@ class RigidBodySolver:
         for body in state.bodies:
             if body.is_dynamic and not body.is_sleeping:
                 self._integrate_body_pose(body, dt)
+
+    def _friction_scale_for_contact(
+        self,
+        body_a: RigidBodyState,
+        body_b: RigidBodyState,
+        normal: np.ndarray,
+    ) -> float:
+        if self._boundary_support_pair(body_a, body_b, normal) is not None:
+            return 0.1
+        if self._is_environment_boundary(body_a) or self._is_environment_boundary(body_b):
+            return 0.35
+        return 1.0
+
+    def _boundary_support_pair(
+        self,
+        body_a: RigidBodyState,
+        body_b: RigidBodyState,
+        normal: np.ndarray,
+    ) -> tuple[RigidBodyState, np.ndarray] | None:
+        if body_a.is_dynamic and self._is_environment_boundary(body_b):
+            support_normal = -normal
+            if support_normal[1] > 0.5:
+                return body_a, support_normal
+        if body_b.is_dynamic and self._is_environment_boundary(body_a):
+            support_normal = normal
+            if support_normal[1] > 0.5:
+                return body_b, support_normal
+        return None
+
+    def _stabilize_boundary_contacts(self, state: WorldState, dt: float) -> None:
+        handled_body_ids: set[int] = set()
+        for contact in state.contacts:
+            body_a = state.get_body(contact.body_a)
+            body_b = state.get_body(contact.body_b)
+            support_pair = self._boundary_support_pair(body_a, body_b, contact.normal)
+            if support_pair is None:
+                continue
+
+            dynamic_body, support_normal = support_pair
+            if dynamic_body.body_id in handled_body_ids or dynamic_body.is_sleeping:
+                continue
+            handled_body_ids.add(dynamic_body.body_id)
+
+            normal_speed = float(np.dot(dynamic_body.linear_velocity, support_normal))
+            if normal_speed < 0.0:
+                dynamic_body.linear_velocity = (
+                    dynamic_body.linear_velocity - normal_speed * support_normal
+                )
+
+            tangential_velocity = (
+                dynamic_body.linear_velocity
+                - np.dot(dynamic_body.linear_velocity, support_normal) * support_normal
+            )
+            tangential_speed = float(np.linalg.norm(tangential_velocity))
+            if tangential_speed < 1.5:
+                dynamic_body.linear_velocity = dynamic_body.linear_velocity - 0.08 * tangential_velocity
+
+            angular_damping = max(0.0, 1.0 - 12.0 * dt)
+            dynamic_body.angular_velocity *= angular_damping
 
     def _update_sleep_states(self, state: WorldState) -> None:
         up = np.array([0.0, 1.0, 0.0], dtype=np.float64)
