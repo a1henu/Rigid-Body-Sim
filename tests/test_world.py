@@ -61,8 +61,8 @@ def test_complex_scene_configures_gravity_boundaries_and_four_dynamic_boxes():
     world = RigidBodyWorld(demo_name="complex_scene")
 
     assert world.config.enable_gravity is True
-    assert world.config.substeps == 6
-    assert world.config.solver_iterations == 10
+    assert world.config.substeps == 4
+    assert world.config.solver_iterations == 8
     assert len(world.state.bodies) == 7
 
     static_bodies = world.state.bodies[:3]

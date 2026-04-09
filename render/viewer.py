@@ -295,7 +295,7 @@ class RigidBodyViewer:
 
         self.camera.track_user_inputs(
             self.window,
-            movement_speed=0.0,
+            movement_speed=0.03,
             hold_key=ti.ui.RMB,
         )
 
@@ -480,7 +480,7 @@ class RigidBodyViewer:
                 self.world.toggle_pause()
 
         with self.gui.sub_window("Controls", 0.02, 0.30, 0.28, 0.22):
-            self.gui.text("Rotate camera: RMB drag")
+            self.gui.text("Move camera: RMB + WASD/EQ")
             if self.world.state.active_demo == "complex_scene":
                 self.gui.text("Drag body: LMB drag")
             else:

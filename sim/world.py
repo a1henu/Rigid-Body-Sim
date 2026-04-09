@@ -477,8 +477,8 @@ class RigidBodyWorld:
 
     def _build_complex_scene_demo(self) -> None:
         self.config.enable_gravity = True
-        self.config.substeps = 6
-        self.config.solver_iterations = 10
+        self.config.substeps = 4
+        self.config.solver_iterations = 8
         self.config.max_contacts_per_pair = 4
         self.config.linear_damping = 0.12
         self.config.angular_damping = 0.18
