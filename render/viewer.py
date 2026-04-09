@@ -231,6 +231,7 @@ class RigidBodyViewer:
         self.buffers = None
         self._buffer_capacity = 0
         self._hotkey_latches: dict[str, bool] = {}
+        self._drag_cursor_prev: np.ndarray | None = None
 
         if ti is not None:
             _ensure_taichi_runtime()
@@ -323,6 +324,10 @@ class RigidBodyViewer:
         if primary_body_id is None:
             return
 
+        if self.world.state.active_demo == "complex_scene":
+            self._handle_complex_scene_drag(primary_body_id)
+            return
+
         force = np.zeros(3, dtype=np.float64)
         if self.window.is_pressed(ti.ui.LEFT, "a"):
             force[0] -= self.force_strength
@@ -337,10 +342,28 @@ class RigidBodyViewer:
         if self.window.is_pressed("e"):
             force[2] -= self.force_strength
         if np.any(force):
-            if self.world.state.active_demo == "complex_scene":
-                self.world.apply_impulse_to_body(primary_body_id, 0.02 * force)
-            else:
-                self.world.apply_force_to_body(primary_body_id, force)
+            self.world.apply_force_to_body(primary_body_id, force)
+
+    def _handle_complex_scene_drag(self, body_id: int) -> None:
+        assert self.window is not None
+
+        lmb_pressed = self.window.is_pressed(ti.ui.LMB)
+        rmb_pressed = self.window.is_pressed(ti.ui.RMB)
+        cursor_pos = np.asarray(self.window.get_cursor_pos(), dtype=np.float64)
+
+        if lmb_pressed and not rmb_pressed:
+            if self._drag_cursor_prev is not None:
+                cursor_delta = cursor_pos - self._drag_cursor_prev
+                drag_impulse = 6.0 * np.array(
+                    [cursor_delta[0], 0.0, -cursor_delta[1]],
+                    dtype=np.float64,
+                )
+                if np.linalg.norm(drag_impulse) > 1e-6:
+                    self.world.apply_impulse_to_body(body_id, drag_impulse)
+            self._drag_cursor_prev = cursor_pos
+            return
+
+        self._drag_cursor_prev = None
 
     def _edge_pressed(self, name: str, *keys) -> bool:
         assert self.window is not None
@@ -459,7 +482,7 @@ class RigidBodyViewer:
         with self.gui.sub_window("Controls", 0.02, 0.30, 0.28, 0.22):
             self.gui.text("Rotate camera: RMB drag")
             if self.world.state.active_demo == "complex_scene":
-                self.gui.text("Apply impulse: WASD/QE")
+                self.gui.text("Drag body: LMB drag")
             else:
                 self.gui.text("Apply force: WASD/QE")
             self.gui.text("Switch demo: Tab")
