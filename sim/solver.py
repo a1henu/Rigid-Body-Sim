@@ -14,6 +14,13 @@ from sim.state import (
     integrate_quat_wxyz,
     safe_normalize,
 )
+from sim.taichi_step import (
+    TaichiStepBuffers,
+    ensure_taichi_step_runtime,
+    integrate_positions_kernel,
+    integrate_velocities_kernel,
+    taichi_step_available,
+)
 
 
 @dataclass(slots=True)
@@ -35,6 +42,8 @@ class RigidBodySolver:
 
     def __init__(self, config: SimulationConfig):
         self.config = config
+        self._taichi_step_enabled = config.use_taichi_step and taichi_step_available()
+        self._taichi_buffers: TaichiStepBuffers | None = None
 
     def step(self, state: WorldState, dt: float | None = None) -> None:
         step_dt = self.config.time_step if dt is None else float(dt)
@@ -106,6 +115,8 @@ class RigidBodySolver:
         _ = body, command
 
     def _integrate_velocities(self, state: WorldState, dt: float) -> None:
+        if self._try_taichi_integrate_velocities(state, dt):
+            return
         for body in state.bodies:
             if body.is_dynamic and not body.is_sleeping:
                 self._integrate_body_velocity(body, dt)
@@ -491,9 +502,66 @@ class RigidBodySolver:
             body_b.position = body_b.position + correction * body_b.inverse_mass
 
     def _integrate_positions(self, state: WorldState, dt: float) -> None:
+        if self._try_taichi_integrate_positions(state, dt):
+            return
         for body in state.bodies:
             if body.is_dynamic and not body.is_sleeping:
                 self._integrate_body_pose(body, dt)
+
+    def _ensure_taichi_buffers(self, body_count: int) -> TaichiStepBuffers | None:
+        if not self._taichi_step_enabled:
+            return None
+        if not ensure_taichi_step_runtime():
+            self._taichi_step_enabled = False
+            return None
+        if self._taichi_buffers is None or self._taichi_buffers.body_capacity < max(1, body_count):
+            self._taichi_buffers = TaichiStepBuffers(max(1, body_count))
+        return self._taichi_buffers
+
+    def _try_taichi_integrate_velocities(self, state: WorldState, dt: float) -> bool:
+        buffers = self._ensure_taichi_buffers(len(state.bodies))
+        if buffers is None:
+            return False
+        body_count = buffers.load_from_state(state)
+        gravity = self.config.gravity if self.config.enable_gravity else np.zeros(3, dtype=np.float64)
+        integrate_velocities_kernel(
+            body_count,
+            np.float32(dt),
+            np.float32(gravity[0]),
+            np.float32(gravity[1]),
+            np.float32(gravity[2]),
+            np.float32(self.config.linear_damping),
+            np.float32(self.config.angular_damping),
+            buffers.dynamic_mask,
+            buffers.sleep_mask,
+            buffers.inverse_mass,
+            buffers.inverse_inertia_diag,
+            buffers.orientation,
+            buffers.linear_velocity,
+            buffers.angular_velocity,
+            buffers.force,
+            buffers.torque,
+        )
+        buffers.store_motion_to_state(state)
+        return True
+
+    def _try_taichi_integrate_positions(self, state: WorldState, dt: float) -> bool:
+        buffers = self._ensure_taichi_buffers(len(state.bodies))
+        if buffers is None:
+            return False
+        body_count = buffers.load_from_state(state)
+        integrate_positions_kernel(
+            body_count,
+            np.float32(dt),
+            buffers.dynamic_mask,
+            buffers.sleep_mask,
+            buffers.position,
+            buffers.orientation,
+            buffers.linear_velocity,
+            buffers.angular_velocity,
+        )
+        buffers.store_motion_to_state(state)
+        return True
 
     def _stabilize_supported_bodies(self, state: WorldState, dt: float) -> None:
         up = np.array([0.0, 1.0, 0.0], dtype=np.float64)

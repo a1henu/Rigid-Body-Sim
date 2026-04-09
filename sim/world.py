@@ -477,6 +477,7 @@ class RigidBodyWorld:
 
     def _build_complex_scene_demo(self) -> None:
         self.config.enable_gravity = True
+        self.config.use_taichi_step = True
         self.config.substeps = 4
         self.config.solver_iterations = 8
         self.config.max_contacts_per_pair = 4

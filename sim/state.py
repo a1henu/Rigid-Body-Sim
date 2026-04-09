@@ -159,6 +159,7 @@ class SimulationConfig:
     enable_gravity: bool = False
     enable_collisions: bool = True
     max_contacts_per_pair: int = 8
+    use_taichi_step: bool = False
 
     def clone(self) -> "SimulationConfig":
         return copy.deepcopy(self)
