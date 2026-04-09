@@ -337,7 +337,10 @@ class RigidBodyViewer:
         if self.window.is_pressed("e"):
             force[2] -= self.force_strength
         if np.any(force):
-            self.world.apply_force_to_body(primary_body_id, force)
+            if self.world.state.active_demo == "complex_scene":
+                self.world.apply_impulse_to_body(primary_body_id, 0.02 * force)
+            else:
+                self.world.apply_force_to_body(primary_body_id, force)
 
     def _edge_pressed(self, name: str, *keys) -> bool:
         assert self.window is not None
@@ -455,7 +458,10 @@ class RigidBodyViewer:
 
         with self.gui.sub_window("Controls", 0.02, 0.30, 0.28, 0.22):
             self.gui.text("Move camera: RMB + WASD/EQ")
-            self.gui.text("Apply force: WASD/QE")
+            if self.world.state.active_demo == "complex_scene":
+                self.gui.text("Apply impulse: WASD/QE")
+            else:
+                self.gui.text("Apply force: WASD/QE")
             self.gui.text("Switch demo: Tab")
             if self.world.state.active_demo == "two_body_collision":
                 self.gui.text("Collision case: B / N")
