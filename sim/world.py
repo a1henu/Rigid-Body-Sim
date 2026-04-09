@@ -276,11 +276,22 @@ class RigidBodyWorld:
         self.state.pending_commands.append(command)
 
     def apply_force_to_body(self, body_id: int, force, world_point=None) -> None:
+        scaled_force = max(1, self.config.substeps) * np.asarray(force, dtype=np.float64)
         self.queue_command(
             InteractionCommand(
                 command_type=CommandType.APPLY_FORCE,
                 body_id=body_id,
-                value=np.asarray(force, dtype=np.float64),
+                value=scaled_force,
+                world_point=None if world_point is None else np.asarray(world_point, dtype=np.float64),
+            )
+        )
+
+    def apply_impulse_to_body(self, body_id: int, impulse, world_point=None) -> None:
+        self.queue_command(
+            InteractionCommand(
+                command_type=CommandType.APPLY_IMPULSE,
+                body_id=body_id,
+                value=np.asarray(impulse, dtype=np.float64),
                 world_point=None if world_point is None else np.asarray(world_point, dtype=np.float64),
             )
         )
@@ -465,10 +476,10 @@ class RigidBodyWorld:
 
     def _build_complex_scene_demo(self) -> None:
         self.config.enable_gravity = True
-        self.config.substeps = 4
-        self.config.solver_iterations = 12
-        self.config.linear_damping = 0.05
-        self.config.angular_damping = 0.08
+        self.config.substeps = 6
+        self.config.solver_iterations = 10
+        self.config.linear_damping = 0.12
+        self.config.angular_damping = 0.18
         self.add_body(
             create_box_body(
                 name="floor",
@@ -507,22 +518,23 @@ class RigidBodyWorld:
         )
 
         dynamic_boxes = [
-            ("striker", [-2.1, -0.74, 0.0], [2.2, 0.0, 0.0], [0.9, 0.35, 0.25]),
-            ("cluster_a", [-0.65, -0.74, 0.0], [0.0, 0.0, 0.0], [0.25, 0.72, 0.44]),
-            ("cluster_b", [0.1, -0.74, 0.0], [0.0, 0.0, 0.0], [0.3, 0.82, 0.54]),
-            ("cluster_c", [0.85, -0.74, 0.0], [0.0, 0.0, 0.0], [0.92, 0.56, 0.34]),
+            ("striker", [-1.8, -0.75, 0.0], [1.4, 0.0, 0.0], [0.9, 0.35, 0.25], [0.0, 0.0, 0.0]),
+            ("base_left", [-0.35, -0.75, 0.0], [0.0, 0.0, 0.0], [0.25, 0.72, 0.44], [0.0, 0.0, 8.0]),
+            ("base_right", [0.45, -0.75, 0.0], [0.0, 0.0, 0.0], [0.3, 0.82, 0.54], [0.0, 0.0, -6.0]),
+            ("dropper", [0.05, 0.10, 0.0], [0.0, -0.1, 0.0], [0.92, 0.56, 0.34], [0.0, 0.0, 0.0]),
         ]
-        for name, position, linear_velocity, color in dynamic_boxes:
+        for name, position, linear_velocity, color, orientation_deg in dynamic_boxes:
             self.add_body(
                 create_box_body(
                     name=name,
                     half_extents=[0.3, 0.3, 0.3],
                     position=position,
+                    orientation=_quat_from_euler_xyz(orientation_deg),
                     linear_velocity=linear_velocity,
                     angular_velocity=[0.0, 0.0, 0.0],
                     mass=1.0,
-                    restitution=0.02,
-                    friction=0.75,
+                    restitution=0.0,
+                    friction=0.45,
                     color=color,
                 )
             )

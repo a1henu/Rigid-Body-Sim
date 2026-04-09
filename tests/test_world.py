@@ -61,8 +61,8 @@ def test_complex_scene_configures_gravity_boundaries_and_four_dynamic_boxes():
     world = RigidBodyWorld(demo_name="complex_scene")
 
     assert world.config.enable_gravity is True
-    assert world.config.substeps == 4
-    assert world.config.solver_iterations == 12
+    assert world.config.substeps == 6
+    assert world.config.solver_iterations == 10
     assert len(world.state.bodies) == 7
 
     static_bodies = world.state.bodies[:3]
@@ -82,7 +82,7 @@ def test_complex_scene_selection_cycles_over_dynamic_bodies_only():
         names.append(world.get_selected_body().name)
         world.select_next_dynamic_body()
 
-    assert names == ["striker", "cluster_a", "cluster_b", "cluster_c", "striker"]
+    assert names == ["striker", "base_left", "base_right", "dropper", "striker"]
 
 
 def test_complex_scene_produces_contacts_early_without_immediate_fallthrough():
@@ -111,3 +111,15 @@ def test_complex_scene_settles_without_explosive_jitter():
     for body in dynamic_bodies:
         assert np.linalg.norm(body.linear_velocity) < 1.0
         assert np.linalg.norm(body.angular_velocity) < 2.5
+
+
+def test_complex_scene_impulse_interaction_changes_selected_body_velocity():
+    world = RigidBodyWorld(demo_name="complex_scene")
+    selected_body = world.get_selected_body()
+    initial_velocity_x = float(selected_body.linear_velocity[0])
+
+    world.apply_impulse_to_body(selected_body.body_id, [0.08, 0.0, 0.0])
+    world.step()
+
+    updated_body = world.state.get_body(selected_body.body_id)
+    assert float(updated_body.linear_velocity[0]) > initial_velocity_x

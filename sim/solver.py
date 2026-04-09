@@ -46,7 +46,7 @@ class RigidBodySolver:
         if self.config.enable_collisions:
             state.contacts = self._detect_collisions(state)
             self._resolve_contacts(state, step_dt)
-            self._stabilize_boundary_contacts(state, step_dt)
+            self._stabilize_supported_bodies(state, step_dt)
         else:
             state.contacts.clear()
         self._integrate_positions(state, step_dt)
@@ -88,8 +88,18 @@ class RigidBodySolver:
         state.pending_commands.clear()
 
     def _apply_impulse_placeholder(self, body: RigidBodyState, command) -> None:
-        # TODO: apply instantaneous linear/angular velocity updates here.
-        _ = body, command
+        if not body.is_dynamic:
+            return
+        impulse = np.asarray(command.value, dtype=np.float64)
+        if np.linalg.norm(impulse) > 1e-10:
+            body.wake()
+        body.linear_velocity = body.linear_velocity + impulse * body.inverse_mass
+        if command.world_point is not None:
+            lever_arm = np.asarray(command.world_point, dtype=np.float64) - body.position
+            body.angular_velocity = (
+                body.angular_velocity
+                + body.inverse_inertia_world() @ np.cross(lever_arm, impulse)
+            )
 
     def _apply_drag_placeholder(self, body: RigidBodyState, command) -> None:
         # TODO: convert drag interaction into forces or kinematic targets here.
@@ -130,10 +140,55 @@ class RigidBodySolver:
         body_a: RigidBodyState,
         body_b: RigidBodyState,
     ) -> Iterable[Contact]:
+        if body_a.is_dynamic and self._is_environment_boundary(body_b):
+            return self._detect_dynamic_boundary_contacts(body_a, body_b)
+        if body_b.is_dynamic and self._is_environment_boundary(body_a):
+            return self._detect_dynamic_boundary_contacts(body_b, body_a)
         contact = self._detect_box_box_sat(body_a, body_b)
         if contact is None:
             return []
         return [contact]
+
+    def _detect_dynamic_boundary_contacts(
+        self,
+        dynamic_body: RigidBodyState,
+        boundary_body: RigidBodyState,
+    ) -> list[Contact]:
+        boundary_rotation = boundary_body.rotation_matrix()
+        boundary_rotation_t = boundary_rotation.T
+        world_corners = dynamic_body.world_corners()
+        local_corners = (
+            boundary_rotation_t @ (world_corners - boundary_body.position).T
+        ).T
+
+        contacts: list[Contact] = []
+        contact_skin = 2e-3
+        for corner_id, local_corner in enumerate(local_corners):
+            margins = boundary_body.half_extents - np.abs(local_corner)
+            if np.any(margins < -contact_skin):
+                continue
+
+            axis = int(np.argmin(margins))
+            face_sign = 1.0 if local_corner[axis] >= 0.0 else -1.0
+            face_normal_local = np.zeros(3, dtype=np.float64)
+            face_normal_local[axis] = face_sign
+            boundary_surface_local = local_corner.copy()
+            boundary_surface_local[axis] = face_sign * boundary_body.half_extents[axis]
+
+            contacts.append(
+                Contact(
+                    body_a=dynamic_body.body_id,
+                    body_b=boundary_body.body_id,
+                    position=boundary_body.position + boundary_rotation @ boundary_surface_local,
+                    normal=-(boundary_rotation @ face_normal_local),
+                    penetration_depth=float(max(margins[axis], 0.0)),
+                    feature_id=f"boundary:{axis}:{corner_id}",
+                )
+            )
+
+        contacts.sort(key=lambda contact: contact.penetration_depth, reverse=True)
+        max_contacts = max(1, self.config.max_contacts_per_pair)
+        return contacts[:max_contacts]
 
     def _detect_box_box_sat(
         self,
@@ -333,7 +388,6 @@ class RigidBodySolver:
                     relative_velocity,
                     normal,
                     impulse_magnitude,
-                    friction_scale=self._friction_scale_for_contact(body_a, body_b, normal),
                 )
 
         self._apply_positional_correction(body_a, body_b, normal, contact.penetration_depth)
@@ -387,7 +441,6 @@ class RigidBodySolver:
         relative_velocity: np.ndarray,
         normal: np.ndarray,
         normal_impulse_magnitude: float,
-        friction_scale: float = 1.0,
     ) -> None:
         tangential_velocity = relative_velocity - np.dot(relative_velocity, normal) * normal
         tangent_norm = np.linalg.norm(tangential_velocity)
@@ -406,7 +459,7 @@ class RigidBodySolver:
             return
 
         jt = -np.dot(relative_velocity, tangent) / effective_mass
-        friction_coefficient = friction_scale * min(body_a.friction, body_b.friction)
+        friction_coefficient = min(body_a.friction, body_b.friction)
         max_friction = friction_coefficient * normal_impulse_magnitude
         jt = float(np.clip(jt, -max_friction, max_friction))
         if abs(jt) < 1e-10:
@@ -442,64 +495,47 @@ class RigidBodySolver:
             if body.is_dynamic and not body.is_sleeping:
                 self._integrate_body_pose(body, dt)
 
-    def _friction_scale_for_contact(
-        self,
-        body_a: RigidBodyState,
-        body_b: RigidBodyState,
-        normal: np.ndarray,
-    ) -> float:
-        if self._boundary_support_pair(body_a, body_b, normal) is not None:
-            return 0.1
-        if self._is_environment_boundary(body_a) or self._is_environment_boundary(body_b):
-            return 0.35
-        return 1.0
-
-    def _boundary_support_pair(
-        self,
-        body_a: RigidBodyState,
-        body_b: RigidBodyState,
-        normal: np.ndarray,
-    ) -> tuple[RigidBodyState, np.ndarray] | None:
-        if body_a.is_dynamic and self._is_environment_boundary(body_b):
-            support_normal = -normal
-            if support_normal[1] > 0.5:
-                return body_a, support_normal
-        if body_b.is_dynamic and self._is_environment_boundary(body_a):
-            support_normal = normal
-            if support_normal[1] > 0.5:
-                return body_b, support_normal
-        return None
-
-    def _stabilize_boundary_contacts(self, state: WorldState, dt: float) -> None:
-        handled_body_ids: set[int] = set()
-        for contact in state.contacts:
-            body_a = state.get_body(contact.body_a)
-            body_b = state.get_body(contact.body_b)
-            support_pair = self._boundary_support_pair(body_a, body_b, contact.normal)
-            if support_pair is None:
+    def _stabilize_supported_bodies(self, state: WorldState, dt: float) -> None:
+        up = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        for body in state.bodies:
+            if not body.is_dynamic or body.is_sleeping:
                 continue
 
-            dynamic_body, support_normal = support_pair
-            if dynamic_body.body_id in handled_body_ids or dynamic_body.is_sleeping:
-                continue
-            handled_body_ids.add(dynamic_body.body_id)
+            support_normals: list[np.ndarray] = []
+            for contact in state.contacts:
+                if contact.body_a == body.body_id:
+                    other_body = state.get_body(contact.body_b)
+                    support_normal = -contact.normal
+                elif contact.body_b == body.body_id:
+                    other_body = state.get_body(contact.body_a)
+                    support_normal = contact.normal
+                else:
+                    continue
 
-            normal_speed = float(np.dot(dynamic_body.linear_velocity, support_normal))
+                if not self._is_environment_boundary(other_body):
+                    continue
+                if np.dot(support_normal, up) > 0.5:
+                    support_normals.append(support_normal)
+
+            if len(support_normals) < 2:
+                continue
+
+            support_normal = safe_normalize(np.sum(support_normals, axis=0))
+            normal_speed = float(np.dot(body.linear_velocity, support_normal))
             if normal_speed < 0.0:
-                dynamic_body.linear_velocity = (
-                    dynamic_body.linear_velocity - normal_speed * support_normal
-                )
+                body.linear_velocity = body.linear_velocity - normal_speed * support_normal
 
             tangential_velocity = (
-                dynamic_body.linear_velocity
-                - np.dot(dynamic_body.linear_velocity, support_normal) * support_normal
+                body.linear_velocity
+                - np.dot(body.linear_velocity, support_normal) * support_normal
             )
             tangential_speed = float(np.linalg.norm(tangential_velocity))
-            if tangential_speed < 1.5:
-                dynamic_body.linear_velocity = dynamic_body.linear_velocity - 0.08 * tangential_velocity
+            if tangential_speed < 0.25:
+                body.linear_velocity = body.linear_velocity - 0.35 * tangential_velocity
 
-            angular_damping = max(0.0, 1.0 - 12.0 * dt)
-            dynamic_body.angular_velocity *= angular_damping
+            angular_speed = float(np.linalg.norm(body.angular_velocity))
+            if angular_speed < 1.5:
+                body.angular_velocity *= max(0.0, 1.0 - 18.0 * dt)
 
     def _update_sleep_states(self, state: WorldState) -> None:
         up = np.array([0.0, 1.0, 0.0], dtype=np.float64)
@@ -507,7 +543,7 @@ class RigidBodySolver:
             if not body.is_dynamic:
                 continue
 
-            support_contact = False
+            support_contact_count = 0
             for contact in state.contacts:
                 if contact.body_a == body.body_id:
                     support_normal = -contact.normal
@@ -516,20 +552,24 @@ class RigidBodySolver:
                 else:
                     continue
                 if np.dot(support_normal, up) > 0.5:
-                    support_contact = True
-                    break
+                    support_contact_count += 1
 
             linear_speed = np.linalg.norm(body.linear_velocity)
             angular_speed = np.linalg.norm(body.angular_velocity)
             low_energy = linear_speed < 0.35 and angular_speed < 0.35
+            enough_support = support_contact_count >= 2
 
-            if support_contact and low_energy:
+            if enough_support and low_energy:
                 body.sleep_counter += 1
                 if body.sleep_counter >= 15:
                     body.sleep()
             else:
                 body.sleep_counter = 0
-                if body.is_sleeping and (not support_contact or linear_speed > 0.05 or angular_speed > 0.05):
+                if body.is_sleeping and (
+                    not enough_support
+                    or linear_speed > 0.05
+                    or angular_speed > 0.05
+                ):
                     body.wake()
 
     def _integrate_body_pose(self, body: RigidBodyState, dt: float) -> None:

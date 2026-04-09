@@ -82,6 +82,32 @@ def test_step_populates_contacts_for_overlapping_world_state():
     assert len(state.contacts) == 1
 
 
+def test_boundary_collision_generates_multiple_support_contacts():
+    solver = RigidBodySolver(SimulationConfig(enable_gravity=False, enable_collisions=True))
+    floor = create_box_body(
+        name="floor",
+        half_extents=[4.0, 0.2, 4.0],
+        position=[0.0, -1.25, 0.0],
+        motion_type=MotionType.STATIC,
+        user_data={"environment_boundary": True},
+    )
+    box = create_box_body(
+        name="box",
+        half_extents=[0.3, 0.3, 0.3],
+        position=[0.0, -0.73, 0.0],
+        orientation=[0.9961947, 0.0, 0.0, 0.0871557],
+    )
+    floor.body_id = 0
+    box.body_id = 1
+    state = WorldState(bodies=[floor, box])
+
+    contacts = solver._detect_collisions(state)
+
+    assert len(contacts) >= 2
+    assert all(contact.body_a == 1 and contact.body_b == 0 for contact in contacts)
+    assert all(contact.feature_id.startswith("boundary:") for contact in contacts)
+
+
 def test_box_resting_on_floor_enters_sleep_state():
     config = SimulationConfig(
         time_step=1.0 / 240.0,
