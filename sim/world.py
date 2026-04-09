@@ -65,6 +65,7 @@ class RigidBodyWorld:
         self._initial_config = self.config.clone()
         self._initial_snapshots: dict[int, RigidBodySnapshot] = {}
         self._random_case_seed = 20260408
+        self._complex_scene_seed = 20260409
         self._register_two_body_cases()
         self._register_default_demos()
         self.load_demo(demo_name)
@@ -517,24 +518,49 @@ class RigidBodyWorld:
             )
         )
 
-        dynamic_boxes = [
-            ("striker", [-1.8, -0.75, 0.0], [1.4, 0.0, 0.0], [0.9, 0.35, 0.25], [0.0, 0.0, 0.0]),
-            ("base_left", [-0.35, -0.75, 0.0], [0.0, 0.0, 0.0], [0.25, 0.72, 0.44], [0.0, 0.0, 8.0]),
-            ("base_right", [0.45, -0.75, 0.0], [0.0, 0.0, 0.0], [0.3, 0.82, 0.54], [0.0, 0.0, -6.0]),
-            ("dropper", [0.05, 0.10, 0.0], [0.0, -0.1, 0.0], [0.92, 0.56, 0.34], [0.0, 0.0, 0.0]),
-        ]
-        for name, position, linear_velocity, color, orientation_deg in dynamic_boxes:
+        rng = np.random.default_rng(self._complex_scene_seed)
+        self._complex_scene_seed += 1
+
+        base_angle = float(rng.uniform(0.0, 2.0 * np.pi))
+        circle_radius = 1.2
+        box_half_extents = np.array([0.4, 0.25, 0.2], dtype=np.float64)
+        box_names = ("ring_a", "ring_b", "ring_c", "ring_d")
+        box_colors = (
+            [0.9, 0.35, 0.25],
+            [0.28, 0.72, 0.46],
+            [0.24, 0.56, 0.9],
+            [0.92, 0.72, 0.32],
+        )
+
+        for index, (name, color) in enumerate(zip(box_names, box_colors, strict=True)):
+            angle = base_angle + index * 0.5 * np.pi + float(rng.uniform(-0.18, 0.18))
+            radial_dir = np.array([np.cos(angle), 0.0, np.sin(angle)], dtype=np.float64)
+            tangent_dir = np.array([-radial_dir[2], 0.0, radial_dir[0]], dtype=np.float64)
+            radius_offset = float(rng.uniform(-0.08, 0.08))
+            position = np.array(
+                [
+                    *(circle_radius + radius_offset) * radial_dir[[0, 2]],
+                ],
+                dtype=np.float64,
+            )
+            world_position = np.array([position[0], -0.45, position[1]], dtype=np.float64)
+
+            inward_speed = float(rng.uniform(1.45, 1.8))
+            tangential_speed = float(rng.uniform(-0.04, 0.04))
+            linear_velocity = -inward_speed * radial_dir + tangential_speed * tangent_dir
+
+            yaw_deg = float(np.rad2deg(angle) + rng.uniform(-18.0, 18.0))
             self.add_body(
                 create_box_body(
                     name=name,
-                    half_extents=[0.3, 0.3, 0.3],
-                    position=position,
-                    orientation=_quat_from_euler_xyz(orientation_deg),
+                    half_extents=box_half_extents,
+                    position=world_position,
+                    orientation=_quat_from_euler_xyz([0.0, yaw_deg, 0.0]),
                     linear_velocity=linear_velocity,
                     angular_velocity=[0.0, 0.0, 0.0],
                     mass=1.0,
                     restitution=0.0,
-                    friction=0.45,
+                    friction=0.08,
                     color=color,
                 )
             )
